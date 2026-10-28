@@ -1,4 +1,8 @@
 from typing import List, Optional, Dict, Any
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.feature_extraction.text import CountVectorizer
 from langchain_core.tools import tool
 
@@ -77,4 +81,123 @@ def make_tools(session):
         session.store_result("build_dtm_tool", args, summary)
         return summary
 
-    return [build_dtm_tool]
+    @tool
+    def term_frequency_tool(
+        top_n: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Aggregates total term frequencies across all documents in the document-term matrix.
+
+        Args:
+            top_n: Optional number of top terms to include in the returned term frequencies list.
+                   Defaults to 10 if not provided or None.
+
+        Returns:
+            Dict containing result_id, total_terms, and term_frequencies (list of dicts with 'term' and 'frequency').
+        """
+        if session.feature_matrix is None or session.feature_names is None:
+            return {"error": "No feature matrix found in session. Please run build_dtm_tool first."}
+
+        # Sum along columns (axis=0) to get total occurrence count per term
+        term_counts = np.asarray(session.feature_matrix.sum(axis=0)).ravel()
+        
+        # Build list of (term, frequency) dicts
+        freq_list = [
+            {"term": term, "frequency": int(count)}
+            for term, count in zip(session.feature_names, term_counts)
+        ]
+        
+        # Sort descending by frequency
+        freq_list.sort(key=lambda x: x["frequency"], reverse=True)
+
+        # Default limit to 10 terms in summary if top_n is not explicitly set
+        limit = top_n if (top_n is not None and top_n > 0) else 10
+        reported_freqs = freq_list[:limit]
+
+        res_id = session.next_result_id("term_freq")
+        args = {"top_n": top_n}
+
+        summary = {
+            "result_id": res_id,
+            "total_terms": len(session.feature_names),
+            "term_frequencies": reported_freqs
+        }
+
+        # Full report contains all terms in sorted order for full-data downstream tasks
+        df_report = pd.DataFrame(freq_list)
+        session.store_result("term_frequency_tool", args, summary, full_report=df_report)
+        return summary
+
+    @tool
+    def dtm_heatmap_tool(
+        n_terms: int = 20,
+        n_documents: int = 20
+    ) -> Dict[str, Any]:
+        """Generates a raw positional heatmap slice of the document-term matrix.
+
+        Args:
+            n_terms: Number of terms (columns) to include in the heatmap. Defaults to 20.
+            n_documents: Number of documents (rows) to include in the heatmap. Defaults to 20.
+
+        Returns:
+            Dict containing result_id, n_documents, n_terms, term_labels, doc_labels, and matrix_slice.
+        """
+        if session.feature_matrix is None or session.feature_names is None:
+            return {"error": "No feature matrix found in session. Please run build_dtm_tool first."}
+
+        total_docs, total_terms = session.feature_matrix.shape
+        actual_n_docs = min(n_documents, total_docs)
+        actual_n_terms = min(n_terms, total_terms)
+
+        # Slice submatrix and convert to dense array
+        dense_matrix = session.feature_matrix[:actual_n_docs, :actual_n_terms].toarray()
+        term_labels = session.feature_names[:actual_n_terms]
+
+        # Construct doc_labels including category_name if available
+        doc_labels = []
+        if session.dataframe is not None and "category_name" in session.dataframe.columns:
+            cat_names = session.dataframe["category_name"].iloc[:actual_n_docs].tolist()
+            for i in range(actual_n_docs):
+                cat = cat_names[i] if i < len(cat_names) else ""
+                doc_labels.append(f"Doc {i} ({cat})")
+        else:
+            for i in range(actual_n_docs):
+                doc_labels.append(f"Doc {i}")
+
+        # Build figure and heatmap
+        fig, ax = plt.subplots(figsize=(max(6, actual_n_terms * 0.6), max(4, actual_n_docs * 0.4)))
+        sns.heatmap(
+            dense_matrix,
+            annot=True,
+            fmt="d",
+            cmap="Blues",
+            xticklabels=term_labels,
+            yticklabels=doc_labels,
+            ax=ax
+        )
+        ax.set_title(f"Document-Term Matrix Heatmap ({actual_n_docs} Docs x {actual_n_terms} Terms)")
+        ax.set_xlabel("Terms")
+        ax.set_ylabel("Documents")
+        plt.tight_layout()
+
+        # Set pending figure for the chat/pipeline UI
+        session.pending_figure = fig
+        plt.close(fig)
+
+        res_id = session.next_result_id("dtm_heatmap")
+        args = {"n_terms": n_terms, "n_documents": n_documents}
+
+        matrix_list = dense_matrix.tolist()
+
+        summary = {
+            "result_id": res_id,
+            "n_documents": actual_n_docs,
+            "n_terms": actual_n_terms,
+            "term_labels": term_labels,
+            "doc_labels": doc_labels,
+            "matrix_slice": matrix_list
+        }
+
+        session.store_result("dtm_heatmap_tool", args, summary)
+        return summary
+
+    return [build_dtm_tool, term_frequency_tool, dtm_heatmap_tool]

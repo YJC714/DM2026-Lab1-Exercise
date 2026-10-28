@@ -1,5 +1,7 @@
+import json
 import pytest
 import numpy as np
+import pandas as pd
 from agent_pipeline.session_state import SessionState
 from agent_pipeline.workspace_loader import load_workspace_tools
 from tools_dtm import make_tools as make_dtm_tools
@@ -140,3 +142,51 @@ def test_umap_reproducibility_and_plot():
 
     # Assert deterministic reproducibility when random_state is supplied
     np.testing.assert_allclose(coords1, coords2, atol=1e-5)
+
+
+def test_binarize_labels_tool():
+    session = SessionState()
+
+    # Load dataset
+    premade_tools, _ = load_workspace_tools("premade_tools", session)
+    load_dataset_tool = next(t for t in premade_tools if t.name == "load_dataset_tool")
+    load_dataset_tool.invoke({
+        "file_path": "agent_dev/sample_fixture.csv",
+        "text_column": "text",
+        "label_column": "label"
+    })
+
+    # Snapshot copy of session.dataframe before binarizing
+    df_before = session.dataframe.copy(deep=True)
+
+    reduction_tools = make_reduction_tools(session)
+    binarize_labels_tool = next(t for t in reduction_tools if t.name == "binarize_labels_tool")
+
+    res = binarize_labels_tool.invoke({})
+
+    # 1. Verify summary is JSON serializable
+    dumped = json.dumps(res)
+    assert isinstance(dumped, str)
+
+    # 2. Check summary metadata
+    assert res["n_samples"] == 8
+    assert res["n_classes"] == 2
+    assert res["classes"] == ["catA", "catB"]
+
+    # 3. Retrieve binarized DataFrame from artifacts
+    assert "binarized_labels" in session.artifacts
+    bin_df = session.artifacts["binarized_labels"]
+    assert isinstance(bin_df, pd.DataFrame)
+    assert bin_df.shape == (8, 2)
+
+    # 4. Check that every row sums to 1 (one-hot property)
+    row_sums = bin_df.sum(axis=1).tolist()
+    assert row_sums == [1] * 8
+
+    # 5. Check row-by-row label assignments
+    # catA for rows 0,1,2,7; catB for rows 3,4,5,6
+    assert bin_df["catA"].tolist() == [1, 1, 1, 0, 0, 0, 0, 1]
+    assert bin_df["catB"].tolist() == [0, 0, 0, 1, 1, 1, 1, 0]
+
+    # 6. Verify session.dataframe is completely unchanged
+    pd.testing.assert_frame_equal(session.dataframe, df_before)

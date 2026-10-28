@@ -1,5 +1,6 @@
 from typing import Dict, Any, Optional
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
@@ -145,4 +146,43 @@ def make_tools(session):
 
         return summary
 
-    return [reduce_dimensions_tool]
+    @tool
+    def binarize_labels_tool() -> Dict[str, Any]:
+        """One-hot encodes category labels into a binary matrix with one column per category.
+
+        Does not modify session.dataframe. Stores full binarized DataFrame in session.artifacts['binarized_labels'].
+
+        Returns:
+            Dict containing result_id, n_samples, n_classes, classes, and matrix_preview.
+        """
+        if session.dataframe is None or session.dataframe.empty:
+            return {"error": "No dataframe loaded in session state."}
+        if "category_name" not in session.dataframe.columns:
+            return {"error": "DataFrame does not contain a 'category_name' column."}
+
+        category_series = session.dataframe["category_name"]
+        
+        # One-hot encode using pd.get_dummies, ensuring 1 column per category
+        binarized_df = pd.get_dummies(category_series, dtype=int)
+        
+        classes = list(binarized_df.columns)
+        n_samples, n_classes = binarized_df.shape
+
+        # Save to artifacts without modifying session.dataframe
+        session.artifacts["binarized_labels"] = binarized_df
+
+        res_id = session.next_result_id("binarize")
+        args = {}
+
+        summary = {
+            "result_id": res_id,
+            "n_samples": n_samples,
+            "n_classes": n_classes,
+            "classes": classes,
+            "matrix_preview": binarized_df.head(10).to_dict(orient="records")
+        }
+
+        session.store_result("binarize_labels_tool", args, summary, full_report=binarized_df)
+        return summary
+
+    return [reduce_dimensions_tool, binarize_labels_tool]
