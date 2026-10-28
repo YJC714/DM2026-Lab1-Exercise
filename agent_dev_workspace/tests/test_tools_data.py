@@ -239,3 +239,23 @@ def test_tokenize_tool_known_answer_10():
     # 5. Check lowercase=False mode
     res_no_lower = tokenize_tool.invoke({"lowercase": False})
     assert res_no_lower["lowercase"] is False
+
+
+def test_list_files_tool_known_answer_11():
+    session = SessionState()
+
+    data_tools = make_data_tools(session)
+    list_files_tool = next(t for t in data_tools if t.name == "list_files_tool")
+
+    # 1. Known Answer #11: subdirectory="newdataset"
+    res = list_files_tool.invoke({"subdirectory": "newdataset"})
+
+    assert isinstance(json.dumps(res), str)
+    assert res["directories"] == []
+    assert res["files"] == ["Reddit-stock-sentiment.csv"]
+
+    # 2. Security checks: traversal, restricted folders, absolute paths, hidden folders
+    assert "error" in list_files_tool.invoke({"subdirectory": "../.."})
+    assert "error" in list_files_tool.invoke({"subdirectory": "config"})
+    assert "error" in list_files_tool.invoke({"subdirectory": "C:/"})
+    assert "error" in list_files_tool.invoke({"subdirectory": ".git"})

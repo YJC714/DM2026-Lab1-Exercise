@@ -1,3 +1,4 @@
+import os
 from typing import Dict, Any, Optional
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -370,10 +371,80 @@ def make_tools(session):
 
         return summary
 
+    @tool
+    def list_files_tool(
+        subdirectory: str = ""
+    ) -> Dict[str, Any]:
+        """Lists subdirectories and files in a workspace or repo directory.
+
+        Skips hidden files/directories starting with '.' and sensitive folders like 'config'.
+
+        Args:
+            subdirectory: Subdirectory path relative to the repository root. Defaults to "".
+
+        Returns:
+            Dict containing result_id, subdirectory, directories, and files lists.
+        """
+        # Resolve repo_root reliably from __file__ location (parent of workspace)
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        
+        # Guard 1: Check if subdirectory path itself contains hidden or sensitive directory components
+        path_parts = [p.lower() for p in os.path.normpath(subdirectory).split(os.sep) if p and p != "."]
+        for part in path_parts:
+            if part.startswith(".") or part in ["config", "__pycache__"]:
+                return {"error": f"Access denied: Path component '{part}' is restricted."}
+
+        # Guard 2: Resolve absolute path and verify using os.path.commonpath
+        target_path = os.path.abspath(os.path.join(repo_root, subdirectory))
+
+        try:
+            common = os.path.commonpath([repo_root, target_path])
+            if common != repo_root:
+                return {"error": f"Access denied: Path '{subdirectory}' is outside repository root."}
+        except ValueError:
+            return {"error": f"Access denied: Invalid path '{subdirectory}'."}
+
+        if not os.path.exists(target_path):
+            return {"error": f"Subdirectory '{subdirectory}' does not exist."}
+
+        if not os.path.isdir(target_path):
+            return {"error": f"Path '{subdirectory}' is not a directory."}
+
+        directories = []
+        files = []
+
+        for entry in os.scandir(target_path):
+            name = entry.name
+            # Skip hidden files/folders and sensitive folders
+            if name.startswith(".") or name.lower() in ["config", "__pycache__"]:
+                continue
+            if entry.is_dir():
+                directories.append(name)
+            elif entry.is_file():
+                files.append(name)
+
+        directories.sort()
+        files.sort()
+
+        res_id = session.next_result_id("list_files")
+        args = {"subdirectory": subdirectory}
+
+        summary = {
+            "result_id": res_id,
+            "subdirectory": subdirectory,
+            "directories": directories,
+            "files": files
+        }
+
+        session.store_result("list_files_tool", args=args, summary=summary)
+
+        return summary
+
     return [
         check_missing_tool,
         check_duplicates_tool,
         describe_data_tool,
         sample_data_tool,
-        tokenize_tool
+        tokenize_tool,
+        list_files_tool
     ]
