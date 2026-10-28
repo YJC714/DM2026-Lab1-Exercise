@@ -1,5 +1,8 @@
 from typing import Dict, Any, Optional
 import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.metrics.pairwise import cosine_similarity
 from langchain_core.tools import tool
 
@@ -99,4 +102,86 @@ def make_tools(session):
         session.store_result("cosine_similarity_tool", args, summary)
         return summary
 
-    return [cosine_similarity_tool]
+    @tool
+    def feature_correlation_matrix_tool(
+        top_n: int = 20
+    ) -> Dict[str, Any]:
+        """Computes Pearson feature-vs-feature correlation matrix for top terms by variance.
+
+        Generates a correlation heatmap and assigns it to session.pending_figure.
+
+        Args:
+            top_n: Number of highest variance terms to include in correlation matrix. Defaults to 20.
+
+        Returns:
+            Dict containing result_id, n_terms, selected_terms, and correlation_matrix.
+        """
+        if session.feature_matrix is None or session.feature_names is None:
+            return {"error": "No feature matrix found in session. Run build_dtm_tool first."}
+
+        matrix = session.feature_matrix
+        if hasattr(matrix, "toarray"):
+            dense_matrix = matrix.toarray()
+        else:
+            dense_matrix = np.asarray(matrix)
+
+        # Compute term variance with ddof=0 matching variance_filter_tool
+        variances = np.var(dense_matrix, axis=0, ddof=0)
+        
+        # Sort terms by variance descending
+        sorted_indices = np.argsort(variances)[::-1]
+        
+        # Take top_n indices
+        actual_top_n = min(top_n, len(session.feature_names))
+        selected_indices = sorted_indices[:actual_top_n]
+
+        selected_terms = [session.feature_names[i] for i in selected_indices]
+        selected_submatrix = dense_matrix[:, selected_indices]
+
+        # Compute Pearson correlation matrix across selected term columns
+        corr_matrix = np.corrcoef(selected_submatrix, rowvar=False)
+
+        # Handle scalar (single term) output from np.corrcoef
+        if np.ndim(corr_matrix) == 0:
+            corr_matrix = np.array([[1.0]])
+
+        # Handle zero-variance terms resulting in NaNs
+        corr_matrix = np.nan_to_num(corr_matrix, nan=0.0)
+        np.fill_diagonal(corr_matrix, 1.0)
+
+        # Plot annotated heatmap
+        fig, ax = plt.subplots(figsize=(max(6, actual_top_n * 0.8), max(5, actual_top_n * 0.7)))
+        sns.heatmap(
+            corr_matrix,
+            annot=True,
+            fmt=".4f",
+            cmap="coolwarm",
+            vmin=-1.0,
+            vmax=1.0,
+            xticklabels=selected_terms,
+            yticklabels=selected_terms,
+            ax=ax
+        )
+        ax.set_title(f"Feature Correlation Matrix (Top {actual_top_n} Terms by Variance)")
+        plt.tight_layout()
+
+        session.pending_figure = fig
+        plt.close(fig)
+
+        res_id = session.next_result_id("feat_corr")
+        args = {"top_n": top_n}
+
+        corr_list = np.round(corr_matrix, 4).tolist()
+
+        summary = {
+            "result_id": res_id,
+            "n_terms": actual_top_n,
+            "selected_terms": selected_terms,
+            "correlation_matrix": corr_list
+        }
+
+        df_report = pd.DataFrame(corr_matrix, index=selected_terms, columns=selected_terms)
+        session.store_result("feature_correlation_matrix_tool", args, summary, full_report=df_report)
+        return summary
+
+    return [cosine_similarity_tool, feature_correlation_matrix_tool]

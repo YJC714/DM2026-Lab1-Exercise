@@ -1,6 +1,7 @@
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pandas as pd
 from langchain_core.tools import tool
 
 
@@ -199,4 +200,95 @@ def make_tools(session):
 
         return summary
 
-    return [check_missing_tool, check_duplicates_tool, describe_data_tool]
+    @tool
+    def sample_data_tool(
+        n: Optional[int] = None,
+        frac: Optional[float] = None,
+        inplace: bool = False,
+        random_state: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Subsamples rows from session.dataframe and optionally replaces session.dataframe with the sampled subset.
+
+        When inplace=True, replaces session.dataframe with the sampled subset, resets the index,
+        clears session.feature_matrix and session.feature_names, and prompts rebuilding the DTM.
+
+        Args:
+            n: Number of items to sample. Defaults to 5 if neither n nor frac is provided.
+            frac: Fraction of items to sample.
+            inplace: If True, replaces session.dataframe with the sampled subset in place. Defaults to False.
+            random_state: Seed for reproducible sampling.
+
+        Returns:
+            Dict containing result_id, n_samples, sampled_indices_preview, and preview of sampled records.
+        """
+        if session.dataframe is None or session.dataframe.empty:
+            return {"error": "No dataframe loaded in session state."}
+
+        if n is not None and frac is not None:
+            return {"error": "Cannot specify both 'n' and 'frac'. Please provide only one."}
+
+        if n is None and frac is None:
+            n = 5
+
+        sampled_df = session.dataframe.sample(
+            n=n,
+            frac=frac,
+            random_state=random_state
+        )
+
+        sampled_indices = sampled_df.index.tolist()
+
+        # Build a preview of top 5 sampled rows, truncating string columns to max 100 chars
+        preview_rows = []
+        for idx, row in sampled_df.head(5).iterrows():
+            row_dict = {"original_index": int(idx)}
+            for col in sampled_df.columns:
+                val = row[col]
+                if isinstance(val, str) and len(val) > 100:
+                    val = val[:100] + "..."
+                row_dict[col] = val
+            preview_rows.append(row_dict)
+
+        note = None
+
+        if inplace:
+            sampled_reset = sampled_df.reset_index(drop=True)
+            session.dataframe = sampled_reset
+
+            # Clear outdated DTM matrix state
+            session.feature_matrix = None
+            session.feature_names = None
+
+            if "category_name" in sampled_reset.columns:
+                session.set_labels(sampled_reset["category_name"].to_numpy())
+
+            note = (
+                "Subsampled dataset in place. Reset index, updated labels, and cleared "
+                "session.feature_matrix and session.feature_names. Please rebuild DTM with "
+                "build_dtm_tool before running downstream filtering/exploration tools."
+            )
+
+        res_id = session.next_result_id("sample_data")
+        args = {
+            "n": n,
+            "frac": frac,
+            "inplace": inplace,
+            "random_state": random_state
+        }
+
+        summary = {
+            "result_id": res_id,
+            "n_samples": len(sampled_df),
+            "inplace": inplace,
+            "sampled_indices_preview": sampled_indices[:10],
+            "preview": preview_rows
+        }
+
+        if note:
+            summary["note"] = note
+
+        session.store_result("sample_data_tool", args=args, summary=summary, full_report=sampled_df)
+
+        return summary
+
+    return [check_missing_tool, check_duplicates_tool, describe_data_tool, sample_data_tool]
