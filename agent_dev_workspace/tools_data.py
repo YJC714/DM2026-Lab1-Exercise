@@ -440,11 +440,68 @@ def make_tools(session):
 
         return summary
 
+    @tool
+    def inspect_data_tool(
+        n_rows: int = 5
+    ) -> Dict[str, Any]:
+        """Inspects session.dataframe shape, column dtypes, category counts, and previews initial rows.
+
+        Leaves session.dataframe completely unchanged.
+
+        Args:
+            n_rows: Number of initial rows to include in the head preview. Defaults to 5.
+
+        Returns:
+            Dict containing result_id, shape, columns, dtypes, category_counts, and head_preview.
+        """
+        if session.dataframe is None or session.dataframe.empty:
+            return {"error": "No dataframe loaded in session state."}
+
+        df = session.dataframe
+        shape = [int(df.shape[0]), int(df.shape[1])]
+        columns = df.columns.tolist()
+        dtypes = {str(col): str(dtype) for col, dtype in df.dtypes.items()}
+
+        category_counts = {}
+        if "category_name" in df.columns:
+            category_counts = {str(k): int(v) for k, v in df["category_name"].value_counts().items()}
+        elif "category" in df.columns:
+            category_counts = {str(k): int(v) for k, v in df["category"].value_counts().items()}
+
+        head_preview = []
+        for idx, row in df.head(n_rows).iterrows():
+            row_dict = {"original_index": int(idx)}
+            for col in columns:
+                val = row[col]
+                if isinstance(val, str) and len(val) > 100:
+                    val = val[:100] + "..."
+                elif isinstance(val, list) and len(val) > 20:
+                    val = val[:20]
+                row_dict[col] = val
+            head_preview.append(row_dict)
+
+        res_id = session.next_result_id("inspect_data")
+        args = {"n_rows": n_rows}
+
+        summary = {
+            "result_id": res_id,
+            "shape": shape,
+            "columns": columns,
+            "dtypes": dtypes,
+            "category_counts": category_counts,
+            "head_preview": head_preview
+        }
+
+        session.store_result("inspect_data_tool", args=args, summary=summary)
+
+        return summary
+
     return [
         check_missing_tool,
         check_duplicates_tool,
         describe_data_tool,
         sample_data_tool,
         tokenize_tool,
-        list_files_tool
+        list_files_tool,
+        inspect_data_tool
     ]

@@ -1,5 +1,6 @@
 import json
 import pytest
+from pandas.testing import assert_frame_equal
 from agent_pipeline.session_state import SessionState
 from agent_pipeline.workspace_loader import load_workspace_tools
 from tools_data import make_tools as make_data_tools
@@ -259,3 +260,28 @@ def test_list_files_tool_known_answer_11():
     assert "error" in list_files_tool.invoke({"subdirectory": "config"})
     assert "error" in list_files_tool.invoke({"subdirectory": "C:/"})
     assert "error" in list_files_tool.invoke({"subdirectory": ".git"})
+
+
+def test_inspect_data_tool():
+    session = SessionState()
+
+    premade_tools, _ = load_workspace_tools("premade_tools", session)
+    load_dataset_tool = next(t for t in premade_tools if t.name == "load_dataset_tool")
+    load_dataset_tool.invoke({
+        "file_path": "agent_dev/sample_fixture.csv",
+        "text_column": "text",
+        "label_column": "label"
+    })
+
+    df_original = session.dataframe.copy()
+
+    data_tools = make_data_tools(session)
+    inspect_data_tool = next(t for t in data_tools if t.name == "inspect_data_tool")
+
+    res = inspect_data_tool.invoke({"n_rows": 3})
+
+    assert isinstance(json.dumps(res), str)
+    assert res["shape"][0] == 8
+    assert res["category_counts"] == {"catA": 4, "catB": 4}
+    assert len(res["head_preview"]) == 3
+    assert_frame_equal(session.dataframe, df_original)
