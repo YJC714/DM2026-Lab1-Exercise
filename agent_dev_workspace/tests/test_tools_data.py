@@ -190,3 +190,52 @@ def test_sample_data_tool_known_answer_13():
     # 4. Test error handling when both n and frac are provided
     res_err = sample_data_tool.invoke({"n": 3, "frac": 0.5})
     assert "error" in res_err
+
+
+def test_tokenize_tool_known_answer_10():
+    session = SessionState()
+
+    premade_tools, _ = load_workspace_tools("premade_tools", session)
+    load_dataset_tool = next(t for t in premade_tools if t.name == "load_dataset_tool")
+    load_dataset_tool.invoke({
+        "file_path": "agent_dev/sample_fixture.csv",
+        "text_column": "text",
+        "label_column": "label"
+    })
+
+    data_tools = make_data_tools(session)
+    tokenize_tool = next(t for t in data_tools if t.name == "tokenize_tool")
+
+    res = tokenize_tool.invoke({"lowercase": True})
+
+    # 1. Verify JSON serializability
+    assert isinstance(json.dumps(res), str)
+
+    # 2. Check summary metadata
+    assert res["n_documents"] == 8
+    assert res["total_tokens"] == 27
+    assert res["lowercase"] is True
+
+    # 3. Expected tokens for each document matching Known Answer #10
+    expected_unigrams = [
+        ["always", "alpha", "alpha", "alpha", "beta"],
+        ["always", "alpha", "alpha", "beta"],
+        ["always", "alpha", "beta"],
+        ["always", "gamma", "gamma", "gamma", "delta"],
+        ["always", "gamma", "gamma", "delta"],
+        ["always", "gamma", "delta"],
+        ["always", "gamma", "delta"],
+        []
+    ]
+
+    # Check session.dataframe["unigrams"] and session.artifacts["unigrams"]
+    assert session.dataframe["unigrams"].tolist() == expected_unigrams
+    assert session.artifacts["unigrams"] == expected_unigrams
+
+    # 4. Check tokens preview
+    assert len(res["tokens_preview"]) == 5
+    assert res["tokens_preview"][0]["tokens"] == expected_unigrams[0]
+
+    # 5. Check lowercase=False mode
+    res_no_lower = tokenize_tool.invoke({"lowercase": False})
+    assert res_no_lower["lowercase"] is False

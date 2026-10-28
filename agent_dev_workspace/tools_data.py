@@ -2,7 +2,20 @@ from typing import Dict, Any, Optional
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+import nltk
+from nltk.tokenize import word_tokenize
 from langchain_core.tools import tool
+
+# Ensure punkt resources are available for nltk.word_tokenize
+try:
+    nltk.data.find("tokenizers/punkt")
+except LookupError:
+    nltk.download("punkt", quiet=True)
+
+try:
+    nltk.data.find("tokenizers/punkt_tab")
+except LookupError:
+    nltk.download("punkt_tab", quiet=True)
 
 
 def make_tools(session):
@@ -291,4 +304,76 @@ def make_tools(session):
 
         return summary
 
-    return [check_missing_tool, check_duplicates_tool, describe_data_tool, sample_data_tool]
+    @tool
+    def tokenize_tool(
+        text_column: str = "text",
+        lowercase: bool = True
+    ) -> Dict[str, Any]:
+        """Tokenizes text documents into unigram tokens using nltk.word_tokenize.
+
+        Populates session.dataframe['unigrams'] and session.artifacts['unigrams'].
+
+        Args:
+            text_column: The DataFrame column containing text to tokenize. Defaults to "text".
+            lowercase: If True, lowercases text before tokenizing. Defaults to True.
+
+        Returns:
+            Dict containing result_id, n_documents, total_tokens, and a preview of document tokens.
+        """
+        if session.dataframe is None or session.dataframe.empty:
+            return {"error": "No dataframe loaded in session state."}
+        if text_column not in session.dataframe.columns:
+            return {"error": f"Column '{text_column}' not found in session.dataframe."}
+
+        text_series = session.dataframe[text_column].fillna("")
+
+        unigrams_list = []
+        for text in text_series:
+            text_str = str(text)
+            if not text_str.strip():
+                unigrams_list.append([])
+            else:
+                if lowercase:
+                    text_str = text_str.lower()
+                tokens = word_tokenize(text_str)
+                unigrams_list.append(tokens)
+
+        # Store in session.dataframe and session.artifacts
+        session.dataframe["unigrams"] = unigrams_list
+        session.artifacts["unigrams"] = unigrams_list
+
+        total_tokens = sum(len(toks) for toks in unigrams_list)
+        n_documents = len(unigrams_list)
+
+        # Build preview of first 5 documents, capping each at 20 tokens
+        preview_tokens = []
+        for i, toks in enumerate(unigrams_list[:5]):
+            doc_preview = toks[:20]
+            preview_tokens.append({
+                "doc_index": i,
+                "token_count": len(toks),
+                "tokens": doc_preview
+            })
+
+        res_id = session.next_result_id("tokenize")
+        args = {"text_column": text_column, "lowercase": lowercase}
+
+        summary = {
+            "result_id": res_id,
+            "n_documents": n_documents,
+            "total_tokens": total_tokens,
+            "lowercase": lowercase,
+            "tokens_preview": preview_tokens
+        }
+
+        session.store_result("tokenize_tool", args=args, summary=summary)
+
+        return summary
+
+    return [
+        check_missing_tool,
+        check_duplicates_tool,
+        describe_data_tool,
+        sample_data_tool,
+        tokenize_tool
+    ]
