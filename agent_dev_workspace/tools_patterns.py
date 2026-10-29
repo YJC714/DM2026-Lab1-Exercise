@@ -25,7 +25,7 @@ def make_tools(session):
     ) -> Dict[str, Any]:
         """Mines frequent word patterns for a specific category using PAMI algorithms.
 
-        Applies per-category vectorization (with English stop words removed) and vocabulary filtering.
+        Applies per-category vectorization (with English stop words removed and accents stripped) and vocabulary filtering.
         Supports 'fpgrowth', 'topk', or 'maxfpgrowth' mining algorithms.
 
         Args:
@@ -55,9 +55,9 @@ def make_tools(session):
         if cat_df.empty:
             return {"error": f"No documents found for category '{category_name}'."}
 
-        # Fit fresh category-local vectorizer (do not drop empty text rows)
+        # Fit fresh category-local vectorizer (do not drop empty text rows; strip_accents='ascii' ensures all terms are ASCII-encodable for PAMI)
         text_series = cat_df["text"].fillna("")
-        vectorizer = CountVectorizer(stop_words="english")
+        vectorizer = CountVectorizer(stop_words="english", strip_accents="ascii")
         dtm = vectorizer.fit_transform(text_series).toarray()
         feature_names = np.array(vectorizer.get_feature_names_out())
 

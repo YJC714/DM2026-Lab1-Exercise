@@ -1,4 +1,5 @@
 import pytest
+import pandas as pd
 from agent_pipeline.session_state import SessionState
 from agent_pipeline.workspace_loader import load_workspace_tools
 from tools_patterns import make_tools as make_patterns_tools
@@ -117,3 +118,26 @@ def test_mine_patterns_tool_known_answers_17_and_20():
         "min_sup": 1
     })
     assert res_max_catb["n_patterns"] == 0
+
+
+def test_mine_patterns_tool_unicode_accent_handling():
+    session = SessionState()
+    session.dataframe = pd.DataFrame({
+        "text": ["café latte", "café mocha", "café espresso", "café americano"],
+        "category_name": ["coffee", "coffee", "coffee", "coffee"]
+    })
+
+    patterns_tools = make_patterns_tools(session)
+    mine_patterns_tool = next(t for t in patterns_tools if t.name == "mine_patterns_tool")
+
+    res = mine_patterns_tool.invoke({
+        "category_name": "coffee",
+        "filtering_method": "tfidf",
+        "algorithm": "fpgrowth",
+        "min_sup": 1
+    })
+
+    assert "error" not in res
+    assert res["n_patterns"] > 0
+    patterns = [p["pattern"] for p in res["patterns_preview"]]
+    assert any("cafe" in pattern for pattern in patterns)
